@@ -8,6 +8,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define BTREE_SIZE 126
+#define VERIFY_FOR_PLACEMENT_SIZE 8
+#define FIXED_OVERFLOW_SIZE 512
 #define MAX_COLS 1024
 #define MAX_USERS 16384
 void print_crazy_dev_welcome() {
@@ -90,6 +93,89 @@ char *DB_InitializerNormalBins(binInitializer *data) {
       mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   close(fd);
   return raw_ptr;
+}
+
+// this is the metadata that holds the ptr to the quick bin for user action
+// and the searchable bin for admin actions
+typedef struct {
+  char *o_1_bin_ptr;
+  char *btree_ptr;
+} btree_ptr_management_packet;
+
+// this is a very modular func that returns the values in the mgmt packet for
+// access
+btree_ptr_management_packet DB_InitializerBTreeBins(binInitializer *data) {
+  // here we instantiate the pointer manager for this type of bin
+  btree_ptr_management_packet bm; // om for overflow management
+  // as you can see, i open the o(1) bin for external display
+  int o_1_fd = open(data->name, O_RDWR | O_CREAT, 0666);
+  int o_1_bin_total_size = data->size * MAX_USERS;
+  // choosing ftruncate over posix_fallocate() for bootstrap companies
+  // only pay for the space you use is the trick with ftruncate (sparse files)
+  ftruncate(o_1_fd, o_1_bin_total_size);
+  // i get the ptr and just close the file to avoid the over load of open files
+  // constraint in linux
+  bm.o_1_bin_ptr = mmap(NULL, o_1_bin_total_size, PROT_READ | PROT_WRITE,
+                        MAP_SHARED, o_1_fd, 0);
+  close(o_1_fd);
+
+  // here i open the b+tree bin for the admin actions like querying the bin
+  int btree_fd = open("btree.bin", O_RDWR | O_CREAT, 0666);
+  int btree_bin_total_size = BTREE_SIZE * MAX_USERS;
+  ftruncate(btree_fd, btree_bin_total_size);
+  bm.btree_ptr = mmap(NULL, btree_bin_total_size, PROT_READ | PROT_WRITE,
+                      MAP_SHARED, btree_fd, 0);
+  close(btree_fd);
+
+  return bm;
+}
+
+// this is also same as above, just holds the pointers for the normal bin
+// and the ptr for the overflow bin and the ptr to know if it is an overflow
+// so we just jump into the overflow or the underflow instantly
+typedef struct {
+  char *underflow_ptr;
+  char *overflow_ptr;
+  char *is_overflow_ptr;
+} overflow_ptr_management_packet;
+
+// this is a very modular func that returns the values in the mgmt packet for
+// access
+overflow_ptr_management_packet
+DB_InitializerOverflowBins(binInitializer *data) {
+  // here we instantiate the pointer manager for this type of bin
+  // idk if you noticed but there is a lot of copy and past because i am mading
+  // the code as modular as possible and i know what i am doing, this is not AI
+  // slop
+  overflow_ptr_management_packet om; // om for overflow management
+  int underflow_fd = open(data->name, O_RDWR | O_CREAT, 0666);
+  int underflow_bin_total_size = data->size * MAX_USERS;
+  // choosing ftruncate over posix_fallocate() for bootstrap companies
+  // only pay for the space you use is the trick with ftruncate (sparse files)
+  ftruncate(underflow_fd, underflow_bin_total_size);
+  // we open mmap the bin and close.. easy
+  om.underflow_ptr = mmap(NULL, underflow_bin_total_size,
+                          PROT_READ | PROT_WRITE, MAP_SHARED, underflow_fd, 0);
+  close(underflow_fd);
+
+  // we open the overflow bin automoatically
+  int overflow_fd = open("overflow.bin", O_RDWR | O_CREAT, 0666);
+  int overflow_bin_total_size = FIXED_OVERFLOW_SIZE * MAX_USERS;
+  ftruncate(overflow_fd, overflow_bin_total_size);
+  om.overflow_ptr = mmap(NULL, overflow_bin_total_size, PROT_READ | PROT_WRITE,
+                         MAP_SHARED, overflow_fd, 0);
+  close(overflow_fd);
+
+  // for future use, here we can just check this bin to route to the right bin
+  int is_overflow_fd = open("is_overflow.bin", O_RDWR | O_CREAT, 0666);
+  int is_overflow_bin_total_size = VERIFY_FOR_PLACEMENT_SIZE * MAX_USERS;
+  ftruncate(is_overflow_fd, is_overflow_bin_total_size);
+  om.is_overflow_ptr =
+      mmap(NULL, is_overflow_bin_total_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+           is_overflow_fd, 0);
+  close(is_overflow_fd);
+
+  return om;
 }
 
 void user_customization(binInitializer *data, int i) {

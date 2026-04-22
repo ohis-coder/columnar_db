@@ -80,7 +80,7 @@ void create_root_files() {
   for (int i = 0; i < 3; i++) {
     if (mkdir(roots[i], 0777) == -1) {
       if (errno != EEXIST) {
-        printf("[!] Error: File Structure already exists\n");
+        perror("[!] Error: File Structure already exists\n");
       }
     }
   }
@@ -95,7 +95,7 @@ typedef struct {
   int queryable;
   int overflow;
   char padding[48];
-} binInitializer;
+} binInitializer __attribute__((aligned(128)));
 
 // this opens a bin with part information in the metadata struct binInitializer
 // basically normal bins with no extra bins for special functions
@@ -116,7 +116,8 @@ char *DB_InitializerNormalBins(binInitializer *data) {
 typedef struct {
   char *o_1_bin_ptr;
   char *btree_ptr;
-} btree_ptr_management_packet;
+  char padding[48];
+} btree_ptr_management_packet __attribute__((aligned(64)));
 
 // this is a very modular func that returns the values in the mgmt packet for
 // access
@@ -138,6 +139,8 @@ btree_ptr_management_packet DB_InitializerBTreeBins(binInitializer *data,
   close(o_1_fd);
 
   // here i open the b+tree bin for the admin actions like querying the bin
+  // i added the folderPath so that the extra bins get put in  the right filder
+  // not in the .c foder
   snprintf(btree_full_path, sizeof(btree_full_path), "%s/btree.bin",
            folderPath);
   int btree_fd = open(btree_full_path, O_RDWR | O_CREAT, 0666);
@@ -157,7 +160,8 @@ typedef struct {
   char *underflow_ptr;
   char *overflow_ptr;
   char *is_overflow_ptr;
-} overflow_ptr_management_packet;
+  char padding[48];
+} overflow_ptr_management_packet __attribute__((aligned(64)));
 
 // this is a very modular func that returns the values in the mgmt packet for
 // access
@@ -181,6 +185,8 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   close(underflow_fd);
 
   // we open the overflow bin automoatically
+  // i added the folderPath so that the extra bins get put in  the right filder
+  // not in the .c foder
   snprintf(ovrflow_full_file_path, sizeof(ovrflow_full_file_path),
            "%s/overflow.bin", folderPath);
   int overflow_fd = open(ovrflow_full_file_path, O_RDWR | O_CREAT, 0666);
@@ -191,6 +197,8 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   close(overflow_fd);
 
   // for future use, here we can just check this bin to route to the right bin
+  // i added the folderPath so that the extra bins get put in  the right filder
+  // not in the .c foder
   snprintf(is_ovrflow_full_file_path, sizeof(is_ovrflow_full_file_path),
            "%s/is_overflow.bin", folderPath);
   int is_overflow_fd = open(is_ovrflow_full_file_path, O_RDWR | O_CREAT, 0666);
@@ -236,7 +244,7 @@ void user_customization(binInitializer *data) {
 
   // to be completed.... this is the main loop that creates all the bins
   // according to their types
-  for (i; i < num_cols; i++) {
+  for (i = 0; i < num_cols; i++) {
     // here, the user starts to customize every columnar bin according to what
     // they contain
     printf("What is the name of column? (max lenght of name is 63 chars): \n");

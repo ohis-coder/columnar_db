@@ -89,26 +89,36 @@ void create_root_files() {
 
 // this is the metadata of every columnar bin, defines the strides, the type,
 // and most def the name
+// added padding so as to be on a cache line
 typedef struct {
   char name[64];
   int size;
   int queryable;
   int overflow;
-  char padding[48];
+  char *bin_ptr;
+  char padding[40];
 } binInitializer __attribute__((aligned(128)));
 
-// this opens a bin with part information in the metadata struct binInitializer
-// basically normal bins with no extra bins for special functions
-char *DB_InitializerNormalBins(binInitializer *data) {
-  int fd = open(data->name, O_RDWR | O_CREAT, 0666);
-  int total_size = data->size * MAX_USERS;
+// WENAAAAA, 23 APRIL STRESSFUL... I OVERWROTE THE WHOLE FUNC TO CREATER THE BIN
+// AND MAD3 IT MODULAR SO THAT WE CAN JUST USE THIS FUNCTION EVERYTIM3 W3 WANT
+// TO OP3N A FIL3
+// IF YOU LOOK CLOSELY NOW IT TAKES THE DATA, THE PATH AND THE SIZE OF THE BIN
+// THAT IS ALL WE NEED TO OPEN A FILE AT ANY PLACE THROUGHOUT THE CODEBASE
+// THE PATH WORKS BECAUSE IN THE USER CUSTOMIZATION WE RENAMED THE BIN TO THE
+// FULL PATH OF THE FOLDER SO ALL THE BINS ARE IN THEIR RIGHT FOLDER
+// ---- old logic still in the codebase ----
+// this opens a bin with part information in the metadata struct
+// binInitializer basically normal bins with no extra bins for special functions
+char *DB_InitializerNormalBins(binInitializer *data, char *fullName,
+                               int total_size) {
+  int fd = open(fullName, O_RDWR | O_CREAT, 0666);
   // choosing ftruncate over posix_fallocate() for bootstrap companies
   // only pay for the space you use is the trick with ftruncate (sparse files)
   ftruncate(fd, total_size);
-  char *raw_ptr =
+  data->bin_ptr =
       mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   close(fd);
-  return raw_ptr;
+  return data->bin_ptr;
 }
 
 // this is the metadata that holds the ptr to the quick bin for user action
@@ -121,34 +131,41 @@ typedef struct {
 
 // this is a very modular func that returns the values in the mgmt packet for
 // access
+// 23 APRIL ENTRY NOW THE FUNC CALLS THE FUCTION TO MAKE A BIN WITH ITS OWN
+// SPECULATIONS
 btree_ptr_management_packet DB_InitializerBTreeBins(binInitializer *data,
                                                     const char *folderPath) {
   char btree_full_path[256];
   // here we instantiate the pointer manager for this type of bin
   btree_ptr_management_packet bm; // bm for btree management
   // as you can see, i open the o(1) bin for external display
-  int o_1_fd = open(data->name, O_RDWR | O_CREAT, 0666);
-  int o_1_bin_total_size = data->size * MAX_USERS;
+  snprintf(btree_full_path, sizeof(btree_full_path), "%s.bin", data->name);
+  bm.o_1_bin_ptr =
+      DB_InitializerNormalBins(data, btree_full_path, data->size * MAX_USERS);
+  // int o_1_fd = open(data->name, O_RDWR | O_CREAT, 0666);
+  // int o_1_bin_total_size = data->size * MAX_USERS;
   // choosing ftruncate over posix_fallocate() for bootstrap companies
   // only pay for the space you use is the trick with ftruncate (sparse files)
-  ftruncate(o_1_fd, o_1_bin_total_size);
+  // ftruncate(o_1_fd, o_1_bin_total_size);
   // i get the ptr and just close the file to avoid the over load of open files
   // constraint in linux
-  bm.o_1_bin_ptr = mmap(NULL, o_1_bin_total_size, PROT_READ | PROT_WRITE,
-                        MAP_SHARED, o_1_fd, 0);
-  close(o_1_fd);
+  // bm.o_1_bin_ptr = mmap(NULL, o_1_bin_total_size, PROT_READ | PROT_WRITE,
+  //                      MAP_SHARED, o_1_fd, 0);
+  // close(o_1_fd);
 
   // here i open the b+tree bin for the admin actions like querying the bin
   // i added the folderPath so that the extra bins get put in  the right filder
   // not in the .c foder
   snprintf(btree_full_path, sizeof(btree_full_path), "%s/btree.bin",
            folderPath);
-  int btree_fd = open(btree_full_path, O_RDWR | O_CREAT, 0666);
-  int btree_bin_total_size = BTREE_SIZE * MAX_USERS;
-  ftruncate(btree_fd, btree_bin_total_size);
-  bm.btree_ptr = mmap(NULL, btree_bin_total_size, PROT_READ | PROT_WRITE,
-                      MAP_SHARED, btree_fd, 0);
-  close(btree_fd);
+  bm.btree_ptr =
+      DB_InitializerNormalBins(data, btree_full_path, BTREE_SIZE * MAX_USERS);
+  // int btree_fd = open(btree_full_path, O_RDWR | O_CREAT, 0666);
+  // int btree_bin_total_size = BTREE_SIZE * MAX_USERS;
+  // ftruncate(btree_fd, btree_bin_total_size);
+  // bm.btree_ptr = mmap(NULL, btree_bin_total_size, PROT_READ | PROT_WRITE,
+  //                    MAP_SHARED, btree_fd, 0);
+  // close(btree_fd);
 
   return bm;
 }
@@ -163,8 +180,9 @@ typedef struct {
   char padding[48];
 } overflow_ptr_management_packet __attribute__((aligned(64)));
 
-// this is a very modular func that returns the values in the mgmt packet for
-// access
+// 23 APRIL ENTRY NOW THE FUNC CALLS THE FUCTION TO MAKE A BIN WITH ITS OWN
+// SPECULATIONS this is a very modular func that returns the values in the mgmt
+// packet for access
 overflow_ptr_management_packet
 DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   char ovrflow_full_file_path[256];
@@ -174,41 +192,36 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   // the code as modular as possible and i know what i am doing, this is not AI
   // slop
   overflow_ptr_management_packet om; // om for overflow management
-  int underflow_fd = open(data->name, O_RDWR | O_CREAT, 0666);
-  int underflow_bin_total_size = data->size * MAX_USERS;
+  // int underflow_fd = open(data->name, O_RDWR | O_CREAT, 0666);
+  // int underflow_bin_total_size = data->size * MAX_USERS;
   // choosing ftruncate over posix_fallocate() for bootstrap companies
   // only pay for the space you use is the trick with ftruncate (sparse files)
-  ftruncate(underflow_fd, underflow_bin_total_size);
+  // ftruncate(underflow_fd, underflow_bin_total_size);
   // we open mmap the bin and close.. easy
-  om.underflow_ptr = mmap(NULL, underflow_bin_total_size,
-                          PROT_READ | PROT_WRITE, MAP_SHARED, underflow_fd, 0);
-  close(underflow_fd);
-
+  snprintf(ovrflow_full_file_path, sizeof(ovrflow_full_file_path), "%s.bin",
+           data->name);
+  om.underflow_ptr = DB_InitializerNormalBins(data, ovrflow_full_file_path,
+                                              data->size * MAX_USERS);
   // we open the overflow bin automoatically
   // i added the folderPath so that the extra bins get put in  the right filder
   // not in the .c foder
   snprintf(ovrflow_full_file_path, sizeof(ovrflow_full_file_path),
            "%s/overflow.bin", folderPath);
-  int overflow_fd = open(ovrflow_full_file_path, O_RDWR | O_CREAT, 0666);
-  int overflow_bin_total_size = FIXED_OVERFLOW_SIZE * MAX_USERS;
-  ftruncate(overflow_fd, overflow_bin_total_size);
-  om.overflow_ptr = mmap(NULL, overflow_bin_total_size, PROT_READ | PROT_WRITE,
-                         MAP_SHARED, overflow_fd, 0);
-  close(overflow_fd);
-
+  // int overflow_fd = open(ovrflow_full_file_path, O_RDWR | O_CREAT, 0666);
+  // int overflow_bin_total_size = FIXED_OVERFLOW_SIZE * MAX_USERS;
+  // ftruncate(overflow_fd, overflow_bin_total_size);
+  om.overflow_ptr = DB_InitializerNormalBins(data, ovrflow_full_file_path,
+                                             FIXED_OVERFLOW_SIZE * MAX_USERS);
   // for future use, here we can just check this bin to route to the right bin
   // i added the folderPath so that the extra bins get put in  the right filder
   // not in the .c foder
   snprintf(is_ovrflow_full_file_path, sizeof(is_ovrflow_full_file_path),
            "%s/is_overflow.bin", folderPath);
-  int is_overflow_fd = open(is_ovrflow_full_file_path, O_RDWR | O_CREAT, 0666);
-  int is_overflow_bin_total_size = VERIFY_FOR_PLACEMENT_SIZE * MAX_USERS;
-  ftruncate(is_overflow_fd, is_overflow_bin_total_size);
-  om.is_overflow_ptr =
-      mmap(NULL, is_overflow_bin_total_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-           is_overflow_fd, 0);
-  close(is_overflow_fd);
-
+  // int is_overflow_fd = open(is_ovrflow_full_file_path, O_RDWR | O_CREAT,
+  // 0666); int is_overflow_bin_total_size = VERIFY_FOR_PLACEMENT_SIZE *
+  // MAX_USERS; ftruncate(is_overflow_fd, is_overflow_bin_total_size);
+  om.is_overflow_ptr = DB_InitializerNormalBins(
+      data, is_ovrflow_full_file_path, VERIFY_FOR_PLACEMENT_SIZE * MAX_USERS);
   return om;
 }
 
@@ -262,6 +275,9 @@ void user_customization(binInitializer *data) {
         // pass that path to the creation process
         snprintf(folderPath, sizeof(folderPath), "%s/%s", roots[0], data->name);
         mkdir(folderPath, 0777);
+        // 23 APRIL THIS IS THE MAGIC THAT MAKES THE FOLDER SYSTEM PERFECT, WE
+        // RELACE THE NAME WITH THE PATH BEFORE CALLING FOR ANYTHING TO BE
+        // CREATED
         snprintf(filePath, sizeof(filePath), "%s/%s", folderPath, data->name);
         strncpy(data->name, filePath, sizeof(data->name) - 1);
         printf("What is the size of each col.. use a power of two eg. "
@@ -298,7 +314,6 @@ void user_customization(binInitializer *data) {
     } else {
       printf("[>] Loading: Setting up your env.\n");
     }
-    printf("[>] Success: Set up Column %d\n", i);
   }
   printf("[>] Success: Your Env is all set up!\n");
 }

@@ -91,7 +91,7 @@ void create_root_files() {
 // and most def the name
 // added padding so as to be on a cache line
 typedef struct {
-  char name[64];
+  char name[512];
   int size;
   int queryable;
   int overflow;
@@ -197,8 +197,8 @@ typedef struct {
 } masterArray;
 
 void user_customization(binInitializer *data, masterArray *registry) {
-  char folderPath[128];
-  char filePath[128];
+  char folderPath[512];
+  char filePath[512];
   int i = 0;
   int num_cols = 0;
   char input[10];
@@ -240,11 +240,12 @@ void user_customization(binInitializer *data, masterArray *registry) {
 
     // here, the user starts to customize every columnar bin according to what
     // they contain
-    printf("What is the name of column? (max lenght of name is 63 chars): \n");
+    printf("What is the name of column? (max lenght of name is 512 chars): \n");
     if (fgets(current_slot->name, sizeof(current_slot->name), stdin) != NULL) {
       // custom check to ensure the name is not empty
-      if (strlen(current_slot->name) == 0 || strlen(current_slot->name) >= 64) {
-        printf("[!] Error: Column name is either empty or more than 63 chars "
+      if (strlen(current_slot->name) == 0 ||
+          strlen(current_slot->name) >= 512) {
+        printf("[!] Error: Column name is either empty or more than 512 chars "
                "long");
         return;
       } else {

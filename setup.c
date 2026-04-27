@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define BTREE_SIZE 126
+#define BTREE_SIZE 128
 #define VERIFY_FOR_PLACEMENT_SIZE 8
 #define FIXED_OVERFLOW_SIZE 512
 #define MAX_COLS 1024
@@ -106,9 +106,6 @@ typedef struct {
 // THAT IS ALL WE NEED TO OPEN A FILE AT ANY PLACE THROUGHOUT THE CODEBASE
 // THE PATH WORKS BECAUSE IN THE USER CUSTOMIZATION WE RENAMED THE BIN TO THE
 // FULL PATH OF THE FOLDER SO ALL THE BINS ARE IN THEIR RIGHT FOLDER
-// ---- old logic still in the codebase ----
-// this opens a bin with part information in the metadata struct
-// binInitializer basically normal bins with no extra bins for special functions
 char *DB_InitializerNormalBins(binInitializer *data, char *fullName,
                                int total_size) {
   int fd = open(fullName, O_RDWR | O_CREAT, 0666);
@@ -142,17 +139,6 @@ btree_ptr_management_packet DB_InitializerBTreeBins(binInitializer *data,
   snprintf(btree_full_path, sizeof(btree_full_path), "%s.bin", data->name);
   bm.o_1_bin_ptr =
       DB_InitializerNormalBins(data, btree_full_path, data->size * MAX_USERS);
-  // int o_1_fd = open(data->name, O_RDWR | O_CREAT, 0666);
-  // int o_1_bin_total_size = data->size * MAX_USERS;
-  // choosing ftruncate over posix_fallocate() for bootstrap companies
-  // only pay for the space you use is the trick with ftruncate (sparse files)
-  // ftruncate(o_1_fd, o_1_bin_total_size);
-  // i get the ptr and just close the file to avoid the over load of open files
-  // constraint in linux
-  // bm.o_1_bin_ptr = mmap(NULL, o_1_bin_total_size, PROT_READ | PROT_WRITE,
-  //                      MAP_SHARED, o_1_fd, 0);
-  // close(o_1_fd);
-
   // here i open the b+tree bin for the admin actions like querying the bin
   // i added the folderPath so that the extra bins get put in  the right filder
   // not in the .c foder
@@ -160,13 +146,6 @@ btree_ptr_management_packet DB_InitializerBTreeBins(binInitializer *data,
            folderPath);
   bm.btree_ptr =
       DB_InitializerNormalBins(data, btree_full_path, BTREE_SIZE * MAX_USERS);
-  // int btree_fd = open(btree_full_path, O_RDWR | O_CREAT, 0666);
-  // int btree_bin_total_size = BTREE_SIZE * MAX_USERS;
-  // ftruncate(btree_fd, btree_bin_total_size);
-  // bm.btree_ptr = mmap(NULL, btree_bin_total_size, PROT_READ | PROT_WRITE,
-  //                    MAP_SHARED, btree_fd, 0);
-  // close(btree_fd);
-
   return bm;
 }
 
@@ -192,12 +171,6 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   // the code as modular as possible and i know what i am doing, this is not AI
   // slop
   overflow_ptr_management_packet om; // om for overflow management
-  // int underflow_fd = open(data->name, O_RDWR | O_CREAT, 0666);
-  // int underflow_bin_total_size = data->size * MAX_USERS;
-  // choosing ftruncate over posix_fallocate() for bootstrap companies
-  // only pay for the space you use is the trick with ftruncate (sparse files)
-  // ftruncate(underflow_fd, underflow_bin_total_size);
-  // we open mmap the bin and close.. easy
   snprintf(ovrflow_full_file_path, sizeof(ovrflow_full_file_path), "%s.bin",
            data->name);
   om.underflow_ptr = DB_InitializerNormalBins(data, ovrflow_full_file_path,
@@ -207,9 +180,6 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   // not in the .c foder
   snprintf(ovrflow_full_file_path, sizeof(ovrflow_full_file_path),
            "%s/overflow.bin", folderPath);
-  // int overflow_fd = open(ovrflow_full_file_path, O_RDWR | O_CREAT, 0666);
-  // int overflow_bin_total_size = FIXED_OVERFLOW_SIZE * MAX_USERS;
-  // ftruncate(overflow_fd, overflow_bin_total_size);
   om.overflow_ptr = DB_InitializerNormalBins(data, ovrflow_full_file_path,
                                              FIXED_OVERFLOW_SIZE * MAX_USERS);
   // for future use, here we can just check this bin to route to the right bin
@@ -217,20 +187,21 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
   // not in the .c foder
   snprintf(is_ovrflow_full_file_path, sizeof(is_ovrflow_full_file_path),
            "%s/is_overflow.bin", folderPath);
-  // int is_overflow_fd = open(is_ovrflow_full_file_path, O_RDWR | O_CREAT,
-  // 0666); int is_overflow_bin_total_size = VERIFY_FOR_PLACEMENT_SIZE *
-  // MAX_USERS; ftruncate(is_overflow_fd, is_overflow_bin_total_size);
   om.is_overflow_ptr = DB_InitializerNormalBins(
       data, is_ovrflow_full_file_path, VERIFY_FOR_PLACEMENT_SIZE * MAX_USERS);
   return om;
 }
 
-void user_customization(binInitializer *data) {
+typedef struct {
+  char metadataArray[2094];
+} masterArray;
+
+void user_customization(binInitializer *data, masterArray *registry) {
   char folderPath[128];
   char filePath[128];
   int i = 0;
-  char input[10];
   int num_cols = 0;
+  char input[10];
   char buffer[32];
 
   printf("Welcome to crazydev's C columnar db, where OLAP can perform OLTP "
@@ -258,64 +229,88 @@ void user_customization(binInitializer *data) {
   // to be completed.... this is the main loop that creates all the bins
   // according to their types
   for (i = 0; i < num_cols; i++) {
+    // APRIL 27 very crazy thing here but check this we create a container that
+    // acts like the struct but in that we create a contiguous block of the same
+    // struct inside so we have a list of the struct object, dont you love C
+    binInitializer *current_slot = &data[i];
+
+    current_slot->overflow = 0;
+    current_slot->queryable = 0;
+    char name_full_path[512];
+
     // here, the user starts to customize every columnar bin according to what
     // they contain
     printf("What is the name of column? (max lenght of name is 63 chars): \n");
-    if (fgets(data->name, sizeof(data->name), stdin) != NULL) {
+    if (fgets(current_slot->name, sizeof(current_slot->name), stdin) != NULL) {
       // custom check to ensure the name is not empty
-      if (strlen(data->name) == 0 || strlen(data->name) >= 64) {
+      if (strlen(current_slot->name) == 0 || strlen(current_slot->name) >= 64) {
         printf("[!] Error: Column name is either empty or more than 63 chars "
                "long");
         return;
       } else {
         // the fgets func is known for notoriously storing the \n as a char to
         // we just rip the index and replace w/ \0 if seen
-        data->name[strcspn(data->name, "\n")] = 0;
+        current_slot->name[strcspn(current_slot->name, "\n")] = 0;
         // we create a path for the bin, we want them in the root files so we
         // pass that path to the creation process
-        snprintf(folderPath, sizeof(folderPath), "%s/%s", roots[0], data->name);
+        snprintf(folderPath, sizeof(folderPath), "%s/%s", roots[0],
+                 current_slot->name);
         mkdir(folderPath, 0777);
         // 23 APRIL THIS IS THE MAGIC THAT MAKES THE FOLDER SYSTEM PERFECT, WE
         // RELACE THE NAME WITH THE PATH BEFORE CALLING FOR ANYTHING TO BE
         // CREATED
-        snprintf(filePath, sizeof(filePath), "%s/%s", folderPath, data->name);
-        strncpy(data->name, filePath, sizeof(data->name) - 1);
+        // 27 APRIL,so from what i can see here, there are 2 differeent paths
+        // one for bins that dont know where they are going and need direction
+        // or automatic and one that wants to land where the code is being
+        // executed  (name_full_path)
+        snprintf(filePath, sizeof(filePath), "%s/%s", folderPath,
+                 current_slot->name);
+        strncpy(current_slot->name, filePath, sizeof(current_slot->name) - 1);
+        snprintf(name_full_path, sizeof(name_full_path), "%s.bin",
+                 current_slot->name);
+
         printf("What is the size of each col.. use a power of two eg. "
                "2,4,8,...512 (preferably 64 for max efficiency)\n");
         if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
           if (!is_num(buffer)) {
             printf("Please input an Integer\n");
           }
-          data->size = strtol(buffer, NULL, 10);
-          if ((data->size & (data->size - 1)) != 0) {
+          current_slot->size = strtol(buffer, NULL, 10);
+          if ((current_slot->size & (current_slot->size - 1)) != 0) {
             printf("Please Input a Power of Two\n");
             return;
           }
+
           printf("is this bin Queryable? (0 for No | 1 for Yes)\n");
           if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
-            data->queryable = strtol(buffer, NULL, 10);
-            if (data->queryable == 0) {
+            current_slot->queryable = strtol(buffer, NULL, 10);
+
+            if (current_slot->queryable == 0) {
               printf("does this bin require overflow handling? (0 for No | 1 "
                      "for Yes)\n");
               if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
-                data->overflow = strtol(buffer, NULL, 10);
+                current_slot->overflow = strtol(buffer, NULL, 10);
               }
             }
           }
         }
       }
     }
-    if (data->queryable == 1) {
+    if (current_slot->queryable == 1) {
       printf("[>] Loading: Setting up your env.\n");
-      DB_InitializerBTreeBins(data, folderPath);
-    } else if (data->overflow == 1) {
+      DB_InitializerBTreeBins(current_slot, folderPath);
+    } else if (current_slot->overflow == 1) {
       printf("[>] Loading: Setting up your env.\n");
-      DB_InitializerOverflowBins(data, folderPath);
+      DB_InitializerOverflowBins(current_slot, folderPath);
     } else {
+      DB_InitializerNormalBins(current_slot, name_full_path,
+                               current_slot->size * MAX_USERS);
       printf("[>] Loading: Setting up your env.\n");
     }
+    strncpy(current_slot->name, name_full_path, sizeof(current_slot->name) - 1);
   }
   printf("[>] Success: Your Env is all set up!\n");
+  memcpy(registry->metadataArray, data, num_cols * sizeof(*data));
 }
 
 int main() {
@@ -325,9 +320,13 @@ int main() {
   binInitializer *data = malloc(sizeof(binInitializer));
   if (data == NULL)
     return 1;
+  masterArray *registry = malloc(sizeof(masterArray));
+  if (registry == NULL)
+    return 1;
 
-  user_customization(data);
+  user_customization(data, registry);
   free(data);
+  free(registry);
   // pause here today!
   return 0;
 }

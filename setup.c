@@ -5,15 +5,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define FAILED -1
 #define BTREE_SIZE 128
 #define VERIFY_FOR_PLACEMENT_SIZE 8
 #define FIXED_OVERFLOW_SIZE 512
 #define MAX_COLS 1024
 #define MAX_USERS 16384
+#define METADATA_SIZE sizeof(binInitializer) * MAX_USERS
 
 void print_crazy_dev_welcome() {
   // ANSI Color Codes
@@ -91,12 +94,12 @@ void create_root_files() {
 // and most def the name
 // added padding so as to be on a cache line
 typedef struct {
-  char name[512];
   int size;
   int queryable;
   int overflow;
   char *bin_ptr;
   char padding[40];
+  char name[512];
 } binInitializer __attribute__((aligned(128)));
 
 // WENAAAAA, 23 APRIL STRESSFUL... I OVERWROTE THE WHOLE FUNC TO CREATER THE BIN
@@ -193,8 +196,27 @@ DB_InitializerOverflowBins(binInitializer *data, const char *folderPath) {
 }
 
 typedef struct {
-  char metadataArray[2094];
+  int active_cols;
+  char padding[60];
+  char metadataArray[sizeof(binInitializer) * MAX_COLS];
 } masterArray;
+
+// APRIL 28 this creates the metadata bin for the DB to know its bearing around
+// the file structure
+masterArray *create_metadata() {
+  int fd = open("metadata.bin", O_RDWR | O_CREAT, 0666);
+
+  if (fd == FAILED) {
+    perror("metadata bin could not be created");
+  }
+
+  ftruncate(fd, METADATA_SIZE);
+
+  masterArray *ptr =
+      mmap(NULL, METADATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  close(fd);
+  return ptr;
+}
 
 void user_customization(binInitializer *data, masterArray *registry) {
   char folderPath[512];
@@ -311,7 +333,13 @@ void user_customization(binInitializer *data, masterArray *registry) {
     strncpy(current_slot->name, name_full_path, sizeof(current_slot->name) - 1);
   }
   printf("[>] Success: Your Env is all set up!\n");
-  memcpy(registry->metadataArray, data, num_cols * sizeof(*data));
+  // APRIL 28 no need for writing in the registry anymore, the registry IS the
+  // metadata_bin memcpy(registry->metadataArray, data, num_cols *
+  // sizeof(*data));
+  masterArray *metadata_bin = create_metadata();
+  metadata_bin->active_cols = num_cols;
+  memcpy(metadata_bin->metadataArray, data, num_cols * sizeof(*data));
+  msync(metadata_bin, METADATA_SIZE, MS_SYNC);
 }
 
 int main() {

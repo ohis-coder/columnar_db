@@ -4,3 +4,4 @@ roots/
 WAL
 REALTIME_DB
 LOG
+metadata.bin

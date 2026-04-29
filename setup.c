@@ -98,9 +98,9 @@ typedef struct {
   int queryable;
   int overflow;
   char *bin_ptr;
-  char padding[40];
+  char padding[44];
   char name[512];
-} binInitializer __attribute__((aligned(128)));
+} binInitializer __attribute__((aligned(1024)));
 
 // WENAAAAA, 23 APRIL STRESSFUL... I OVERWROTE THE WHOLE FUNC TO CREATER THE BIN
 // AND MAD3 IT MODULAR SO THAT WE CAN JUST USE THIS FUNCTION EVERYTIM3 W3 WANT
@@ -216,6 +216,41 @@ masterArray *create_metadata() {
       mmap(NULL, METADATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   close(fd);
   return ptr;
+}
+
+// this function revives the db.. not complete cause there should be an if meta
+// exist just relink and dont do anything else...
+void resurrection() {
+  int i;
+  int size;
+  int cols;
+  char *bin_ptr;
+  char name[512];
+
+  int fd = open("metadata.bin", O_RDWR | O_CREAT, 0666);
+
+  if (fd == FAILED) {
+    perror("could not find metadata");
+  }
+
+  masterArray *master =
+      mmap(NULL, METADATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  close(fd);
+
+  printf("Relinking %d active columns", master->active_cols);
+
+  for (i; i < master->active_cols; i++) {
+    binInitializer *rise =
+        (binInitializer *)&master->metadataArray[i * sizeof(binInitializer)];
+
+    int fd = open(rise->name, O_RDWR);
+    if (fd == FAILED) {
+      perror("could not relink bins");
+    }
+    rise->bin_ptr =
+        mmap(NULL, rise->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    madvise(rise->bin_ptr, rise->size, MADV_WILLNEED);
+  }
 }
 
 void user_customization(binInitializer *data, masterArray *registry) {
@@ -345,6 +380,7 @@ void user_customization(binInitializer *data, masterArray *registry) {
 int main() {
   print_crazy_dev_welcome();
   create_root_files();
+  resurrection();
 
   binInitializer *data = malloc(sizeof(binInitializer));
   if (data == NULL)
